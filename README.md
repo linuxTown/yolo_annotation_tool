@@ -1,7 +1,7 @@
 # Yolo_mark improved
 **Windows** & **Linux** GUI for marking bounded boxes of objects in images for training Yolo v3 and v2
 
-This repository differs from the original, with added functionality, such as the ability to zoom in, pan photo with bounding boxes. Also added ability to delete bounding box by hovering over it and double right click mouse button. Images maintain their aspect ratio, doesn't stretch.
+This repository differs from the original, with added functionality, such as the ability to zoom in, pan photo by holding right mouse button while keeping bounding boxes location. I also added ability to delete bounding box by hovering over it and double right clicking the mouse button. Also images maintain their aspect ratio, doesn't stretch by adding padding to photo edges.
 
 * To compile on **Windows** open `yolo_mark.sln` in MSVS2013/2015, compile it **x64 & Release** and run the file: `x64/Release/yolo_mark.cmd`. Change paths in `yolo_mark.sln` to the OpenCV 2.x/3.x installed on your computer:
 
