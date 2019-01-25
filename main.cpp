@@ -45,15 +45,28 @@ std::atomic<int> mark_line_width(2); // default mark line width is 2 pixels.
 const int MAX_MARK_LINE_WIDTH = 3;
 std::atomic<bool> show_mark_class(true);
 
+std::atomic<int> x_delete, y_delete;
 std::atomic<int> x_start, y_start;
 std::atomic<int> x_end, y_end;
 std::atomic<int> x_size, y_size;
 std::atomic<bool> draw_select, selected, undo;
+std::atomic<int> x_mouseMove_start, y_mouseMove_start;
+bool mousePanning = false;
 
 std::atomic<int> add_id_img;
 Rect prev_img_rect(0, 0, 50, 100);
 Rect next_img_rect(1280 - 50, 0, 50, 100);
 
+Size current_img_size;
+Size original_img_size;
+
+float mouseScroll = 0;
+int scrollHeightPad = 0;
+int scrollWidthPad = 0;
+bool zooming = false;
+std::atomic<int> imgHOrig, imgWOrig;
+int topPad, botPad, leftPad, rightPad;
+float scaleWidth, scaleHeight;
 
 void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
 {
@@ -85,17 +98,59 @@ void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
     }
     else if (event == cv::EVENT_RBUTTONDOWN)
     {
-        //right_button_click = true;
-        //std::cout << "cv::EVENT_RBUTTONDOWN \n";
+        x_mouseMove_start = x;
+        y_mouseMove_start = y;
+        mousePanning = true;
     }
-    if (event == cv::EVENT_RBUTTONDBLCLK)
+    else if (event == cv::EVENT_RBUTTONUP)
     {
+        mousePanning = false;
+    }
+    if (event == cv::EVENT_RBUTTONDBLCLK) // right mouse button double click
+    {
+        right_button_click = true;
+        std::cout << "cv::EVENT_RBUTTONDOWN \n";
+        x_delete = x;
+        y_delete = y;
+        //std::cout << prev_img_rect.height;
+        y_delete -= prev_img_rect.height; // remove top bar height from coordinates
+        y_delete = max((int)y_delete, 0);
         std::cout << "cv::EVENT_RBUTTONDBLCLK \n";
     }
     else if (event == cv::EVENT_MOUSEMOVE)
     {
-        x_end = max(x, 0);
-        y_end = max(y, 0);
+        if(mousePanning){
+            scrollHeightPad += (y - y_mouseMove_start);
+            scrollWidthPad += (x - x_mouseMove_start);
+            // clamp min to above or equal to zero
+            scrollHeightPad = max(scrollHeightPad, 0);
+            scrollWidthPad = max(scrollWidthPad, 0);
+            // clamp scroll max:
+            //scrollHeightPad = min(scrollHeightPad, original_img_size.height - current_img_size.height);
+            //scrollWidthPad = min(scrollWidthPad, original_img_size.width - current_img_size.width);
+            x_mouseMove_start = x;
+            y_mouseMove_start = y;
+        }else{
+            x_end = max(x, 0);
+            y_end = max(y, 0);
+        }
+    }
+    
+    // if mouse scroll:
+    if (event==EVENT_MOUSEWHEEL)
+    {
+        if (getMouseWheelDelta(flags) > 0 && mouseScroll < 0.9){
+            mouseScroll += (float)0.1;
+            zooming = true;
+            //std::min(mouseScroll, 0.9f);
+        }
+        else if(getMouseWheelDelta(flags) < 0 && mouseScroll > 0.1){
+            mouseScroll -= (float)0.1;
+            zooming = true;
+            //std::max(mouseScroll, 0.0f);
+        }
+        
+        std::cout << "cv::EVENT_MOUSEWHEEL scroll: " << mouseScroll << "\n";
     }
 }
 
@@ -106,6 +161,44 @@ protected:
 	char do_decimal_point() const { return '.';	}
 };
 
+cv::Mat resizeKeepAspectRatio(const cv::Mat &input, const cv::Size &dstSize, const cv::Scalar &bgcolor)
+{
+    cv::Mat output;
+    
+    double h1 = dstSize.width * (input.rows/(double)input.cols);
+    double w2 = dstSize.height * (input.cols/(double)input.rows);
+
+    if( h1 <= dstSize.height) {
+        cv::resize( input, output, cv::Size(dstSize.width, h1));
+    } else {
+        cv::resize( input, output, cv::Size(w2, dstSize.height));
+    }
+
+    topPad = (dstSize.height - output.rows) / 2;
+    botPad = (dstSize.height - output.rows + 1) / 2;
+    leftPad = (dstSize.width - output.cols) / 2;
+    rightPad = (dstSize.width - output.cols + 1) / 2;
+
+    cv::copyMakeBorder(output, output, topPad, botPad, leftPad, rightPad, cv::BORDER_CONSTANT, bgcolor);
+    
+    // multiply by zoom in scale and crop
+    //int imgH = input.rows + input.rows * mouseScroll;
+    //int imgW = input.cols + input.cols * mouseScroll;
+    int maxX0 = dstSize.width - ((float)output.cols * (1.0 - mouseScroll));
+    int maxY0 = dstSize.height - ((float)output.rows * (1.0 - mouseScroll));
+    scrollWidthPad = scrollWidthPad <= maxX0 ? scrollWidthPad : maxX0;
+    scrollHeightPad = scrollHeightPad <= maxY0 ? scrollHeightPad : maxY0;
+    int x0 = scrollWidthPad;
+    int y0 = scrollHeightPad;
+
+    output = output(Rect(x0, y0, output.cols - (float)output.cols * mouseScroll, output.rows - (float)output.rows * mouseScroll));
+    int oldWidth = output.cols;
+    int oldHeight = output.rows;
+    cv::resize( output, output, cv::Size(dstSize.width, dstSize.height));
+    scaleHeight = (float)output.rows / oldHeight;
+    scaleWidth = (float)output.cols / oldWidth;
+    return output;
+}
 
 int main(int argc, char *argv[])
 {
@@ -140,7 +233,8 @@ int main(int argc, char *argv[])
 		if (argc >= 4 && train_filename == "cap_video") {
 			const std::string videofile = synset_filename;
 			cv::VideoCapture cap(videofile);
-			const int fps = cap.get(CV_CAP_PROP_FPS);
+			//const int fps = cap.get(CV_CAP_PROP_FPS);
+			const int fps = cap.get(CAP_PROP_FPS);
 			int frame_counter = 0, image_counter = 0;
 			float save_each_frames = 50;
 			if (argc >= 5) save_each_frames = std::stoul(std::string(argv[4]));
@@ -186,6 +280,7 @@ int main(int argc, char *argv[])
 		std::vector<std::string> jpg_in_train;
 		std::vector<std::string> synset_txt;
 
+		// image-paths to txt-paths
 		for (auto &i : filenames_in_folder)
 		{
 			int pos_filename = 0;
@@ -221,7 +316,7 @@ int main(int argc, char *argv[])
 			return 0;
 		}
 
-		// check whether there is a files with the same name (but different extensions)
+		// check whether there are files with the same names (but different extensions)
 		{
 			auto sorted_names_without_ext = jpg_filenames_without_ext;
 			std::sort(sorted_names_without_ext.begin(), sorted_names_without_ext.end());
@@ -302,26 +397,30 @@ int main(int argc, char *argv[])
 		std::cout << "File loaded: " << synset_filename << std::endl;
 
 		Mat preview(Size(100, 100), CV_8UC3);
-		Mat full_image(Size(1280, 720), CV_8UC3);
-		Mat frame(Size(full_image.cols, full_image.rows + preview.rows), CV_8UC3);
+		//Mat full_image(Size(1680, 1050), CV_8UC3);
+		Mat full_image(Size(1680, 1050), CV_8UC3);
+		Mat frame(Size(full_image.cols, full_image.rows + preview.rows), CV_8UC3); // 8bit U Channels 3
 
 		Rect full_rect_dst(Point2i(0, preview.rows), Size(frame.cols, frame.rows - preview.rows));
 		Mat full_image_roi = frame(full_rect_dst);
 
 		size_t const preview_number = frame.cols / preview.cols;
+        std::vector<Mat> previewImagesCache; 
 
 		struct coord_t {
 			Rect_<float> abs_rect;
 			int id;
 		};
 		std::vector<coord_t> current_coord_vec;
-		Size current_img_size;
-
-
+        float scaleFactor = 1.0;
+        float resizeFactorImage = 0.0;
+        
 		std::string const window_name = "Marking images";
 		namedWindow(window_name, WINDOW_NORMAL);
-		resizeWindow(window_name, 1280, 720);
-		imshow(window_name, frame);
+        
+        resizeWindow(window_name, 1280, 720);
+		
+        imshow(window_name, frame);
 		moveWindow(window_name, 0, 0);
 		setMouseCallback(window_name, callback_mouse_click);
 
@@ -336,19 +435,20 @@ int main(int argc, char *argv[])
 		std::string const trackbar_name_2 = "object id";
 		int const max_object_id = (synset_txt.size() > 0) ? synset_txt.size() : 20;
 		int tb_res_2 = createTrackbar(trackbar_name_2, window_name, &current_obj_id, max_object_id);
-
+        Mat originalImage;
+        int originalImaleLoadedId = -1;
+        Mat dst_roi;
 
 		do {
 			//trackbar_value = min(max(0, trackbar_value), (int)jpg_filenames_path.size() - 1);
-
-			if (old_trackbar_value != trackbar_value || exit_flag)
+			if (old_trackbar_value != trackbar_value || exit_flag || zooming || mousePanning)
 			{
 				trackbar_value = min(max(0, trackbar_value), (int)jpg_filenames_path.size() - 1);
 				setTrackbarPos(trackbar_name, window_name, trackbar_value);
 				frame(Rect(0, 0, frame.cols, preview.rows)) = Scalar::all(0);
 
 				// save current coords
-				if (old_trackbar_value >= 0) // && current_coord_vec.size() > 0) // Yolo v2 can processes background-image without objects
+				if (old_trackbar_value >= 0 && !zooming && !mousePanning) // && current_coord_vec.size() > 0) // Yolo v2 can processes background-image without objects
 				{
 					try
 					{
@@ -365,10 +465,10 @@ int main(int argc, char *argv[])
 						// store coords to [image name].txt
 						for (auto &i : current_coord_vec)
 						{
-							float const relative_center_x = (float)(i.abs_rect.x + i.abs_rect.width / 2) / full_image_roi.cols;
-							float const relative_center_y = (float)(i.abs_rect.y + i.abs_rect.height / 2) / full_image_roi.rows;
-							float const relative_width = (float)i.abs_rect.width / full_image_roi.cols;
-							float const relative_height = (float)i.abs_rect.height / full_image_roi.rows;
+							float const relative_center_x = (float)(i.abs_rect.x + i.abs_rect.width / 2);// / full_image_roi.cols;
+							float const relative_center_y = (float)(i.abs_rect.y + i.abs_rect.height / 2);// / full_image_roi.rows;
+							float const relative_width = (float)i.abs_rect.width;// / full_image_roi.cols;
+							float const relative_height = (float)i.abs_rect.height;// / full_image_roi.rows;
 
 							if (relative_width <= 0) continue;
 							if (relative_height <= 0) continue;
@@ -394,55 +494,95 @@ int main(int argc, char *argv[])
 					}
 					catch (...) { std::cout << " Exception when try to write txt-file \n"; }
 				}
-
+                
+                bool loadPreviewImagesToCache = false;
 				// show preview images
 				for (size_t i = 0; i < preview_number && (i + trackbar_value) < jpg_filenames_path.size(); ++i)
 				{
-					Mat img = imread(jpg_filenames_path[trackbar_value + i]);
-					// check if the image has been loaded successful to prevent crash 
-					if (img.cols == 0)
-					{
-						continue;
-					}
-					resize(img, preview, preview.size());
-					int const x_shift = i*preview.cols + prev_img_rect.width;
-					Rect rect_dst(Point2i(x_shift, 0), preview.size());
-					Mat dst_roi = frame(rect_dst);
-					preview.copyTo(dst_roi);
-					//rectangle(frame, rect_dst, Scalar(200, 150, 200), 2);
-					putText(dst_roi, jpg_filenames[trackbar_value + i], Point2i(0, 10), FONT_HERSHEY_COMPLEX_SMALL, 0.5, Scalar::all(255));
-
-					if (i == 0)
-					{
-						resize(img, full_image, full_rect_dst.size());
-						full_image.copyTo(full_image_roi);
+                    if(originalImaleLoadedId != trackbar_value && !zooming && !mousePanning){
+                        originalImaleLoadedId = trackbar_value;
+                        originalImage = imread(jpg_filenames_path[trackbar_value + i]);
+                        // check if the image has been loaded successful to prevent crash 
+                        if (originalImage.cols == 0)
+                        {
+                            continue;
+                        }
+                        original_img_size = originalImage.size();
+                        resize(originalImage, preview, preview.size());
+                        previewImagesCache.clear();
+                        loadPreviewImagesToCache = true;
+                        previewImagesCache.push_back(preview.clone());
+                    }else{
+                        if(loadPreviewImagesToCache){
+                            Mat previewImage = imread(jpg_filenames_path[trackbar_value + i]);
+                            // check if the image has been loaded successful to prevent crash 
+                            if (previewImage.cols == 0)
+                            {
+                                continue;
+                            }
+                            resize(previewImage, preview, preview.size());
+                            previewImagesCache.push_back(preview.clone());
+                        }else{
+                            if(i < previewImagesCache.size()){
+                                preview = previewImagesCache.at(i);
+                                //resize(previewImage, preview, preview.size());
+                            }
+                        }
+                    }
+                    
+                    int const x_shift = i*preview.cols + prev_img_rect.width;
+                    Rect rect_dst(Point2i(x_shift, 0), preview.size());
+                    dst_roi = frame(rect_dst);
+                    preview.copyTo(dst_roi);
+                    //rectangle(frame, rect_dst, Scalar(200, 150, 200), 2);
+                    putText(dst_roi, jpg_filenames[trackbar_value + i], Point2i(0, 10), FONT_HERSHEY_COMPLEX_SMALL, 0.5, Scalar::all(255));
+                        
+					if (i == 0) // for current image, show bellow
+					{ 
+                        imgHOrig = originalImage.rows;
+                        imgWOrig = originalImage.cols;
+                        
+                        Mat img = originalImage;
+                        full_image = resizeKeepAspectRatio(img, full_rect_dst.size(), cv::Scalar(0,0,0));
+                        full_image.copyTo(full_image_roi);
 						current_img_size = img.size();
+                        scaleFactor = (float)original_img_size.width / current_img_size.width;
+                        resizeFactorImage = (float) full_rect_dst.width / original_img_size.width;
+                        
+                        // pad to cursor location:
+                        int const x_inside = std::min((int)x_end, full_image_roi.cols);
+                        int const y_inside = std::min(std::max(0, y_end - (int)prev_img_rect.height), full_image_roi.rows);
+                        float const relative_center_x = ((float)(x_inside) / full_image_roi.cols);
+                        float const relative_center_y = ((float)(y_inside) / full_image_roi.rows);
+                        
+                        // read bounding boxes from file
+                        if(!zooming && !mousePanning){
+                            try {
+                                std::string const jpg_filename = jpg_filenames[trackbar_value];
+                                std::string const txt_filename = jpg_filename.substr(0, jpg_filename.find_last_of(".")) + ".txt";
+                                //std::cout << (images_path + "/" + txt_filename) << std::endl;
+                                std::ifstream ifs(images_path + "/" + txt_filename);
+                                current_coord_vec.clear();
+                                for (std::string line; getline(ifs, line);)
+                                {
+                                    std::stringstream ss(line);
+                                    coord_t coord;
+                                    coord.id = -1;
+                                    ss >> coord.id;
+                                    if (coord.id < 0) continue;
+                                    float relative_coord[4] = { -1, -1, -1, -1 };  // rel_center_x, rel_center_y, rel_width, rel_height                          
+                                    for (size_t i = 0; i < 4; i++) if(!(ss >> relative_coord[i])) continue;
+                                    for (size_t i = 0; i < 4; i++) if (relative_coord[i] < 0) continue;
+                                    coord.abs_rect.x = (relative_coord[0] - relative_coord[2] / 2);
+                                    coord.abs_rect.y = (relative_coord[1] - relative_coord[3] / 2);
+                                    coord.abs_rect.width = relative_coord[2];
+                                    coord.abs_rect.height = relative_coord[3];
 
-						try {
-							std::string const jpg_filename = jpg_filenames[trackbar_value];
-							std::string const txt_filename = jpg_filename.substr(0, jpg_filename.find_last_of(".")) + ".txt";
-							//std::cout << (images_path + "/" + txt_filename) << std::endl;
-							std::ifstream ifs(images_path + "/" + txt_filename);
-							current_coord_vec.clear();
-							for (std::string line; getline(ifs, line);)
-							{
-								std::stringstream ss(line);
-								coord_t coord;
-								coord.id = -1;
-								ss >> coord.id;
-								if (coord.id < 0) continue;
-								float relative_coord[4] = { -1, -1, -1, -1 };  // rel_center_x, rel_center_y, rel_width, rel_height                          
-								for (size_t i = 0; i < 4; i++) if(!(ss >> relative_coord[i])) continue;
-								for (size_t i = 0; i < 4; i++) if (relative_coord[i] < 0) continue;
-								coord.abs_rect.x = (relative_coord[0] - relative_coord[2] / 2) * (float)full_image_roi.cols;
-								coord.abs_rect.y = (relative_coord[1] - relative_coord[3] / 2) * (float)full_image_roi.rows;
-								coord.abs_rect.width = relative_coord[2] * (float)full_image_roi.cols;
-								coord.abs_rect.height = relative_coord[3] * (float)full_image_roi.rows;
-
-								current_coord_vec.push_back(coord);
-							}
-						}
-						catch (...) { std::cout << " Exception when try to read txt-file \n"; }
+                                    current_coord_vec.push_back(coord);
+                                }
+                            }
+                            catch (...) { std::cout << " Exception when try to read txt-file \n"; }
+                        }
 					}
 
 					std::string const jpg_filename = jpg_filenames[trackbar_value + i];
@@ -456,14 +596,20 @@ int main(int argc, char *argv[])
 						line(dst_roi, Point2i(85, 93), Point2i(93, 85), Scalar(50, 200, 100), 2);
 					}
 				}
-				std::cout << " trackbar_value = " << trackbar_value << std::endl;
+                if(!zooming && !mousePanning)
+                    std::cout << " trackbar_value = " << trackbar_value << std::endl;
 
 				old_trackbar_value = trackbar_value;
 
 				marks_changed = false;
+                zooming = false;
 
-				rectangle(frame, prev_img_rect, Scalar(100, 100, 100), CV_FILLED);
-				rectangle(frame, next_img_rect, Scalar(100, 100, 100), CV_FILLED);
+                
+				//rectangle(frame, prev_img_rect, Scalar(100, 100, 100), CV_FILLED);
+				//rectangle(frame, next_img_rect, Scalar(100, 100, 100), CV_FILLED);
+
+				rectangle(frame, prev_img_rect, Scalar(100, 100, 100), FILLED);
+				rectangle(frame, next_img_rect, Scalar(100, 100, 100), FILLED);
 			}
 
 			trackbar_value = min(max(0, trackbar_value), (int)jpg_filenames_path.size() - 1);
@@ -487,7 +633,7 @@ int main(int argc, char *argv[])
 				}
 			}
 
-			if (selected)
+			if (selected) // mouse box draw
 			{
 				selected = false;
 				full_image.copyTo(full_image_roi);
@@ -504,16 +650,33 @@ int main(int argc, char *argv[])
 						++trackbar_value;
 						current_coord_vec.clear();
 					}
-
+                    
 					Rect selected_rect(
 						Point2i((int)min(x_start, x_end), (int)min(y_start, y_end)),
 						Size(x_size, y_size));
 
 					selected_rect &= full_rect_dst;
 					selected_rect.y -= (int)prev_img_rect.height;
+                    
+                    coord_t coord;
+                    // rescale selected_rect
+                    int imgWidth = full_rect_dst.width - rightPad - leftPad;
+                    int imgHeight = full_rect_dst.height - topPad - botPad;
+                    coord.abs_rect.x = (float)selected_rect.x / scaleWidth - leftPad + scrollWidthPad;
+                    coord.abs_rect.y = (float)selected_rect.y / scaleHeight - topPad + scrollHeightPad;
+                
+                    coord.abs_rect.x /= (float)imgWidth;
+                    coord.abs_rect.y /= (float)imgHeight;
+                    // clamp values between 0 and 1
+                    coord.abs_rect.x = std::max((double)coord.abs_rect.x, 0.0);
+                    coord.abs_rect.x = std::min((double)coord.abs_rect.x, 1.0);
+                    coord.abs_rect.y = std::max((double)coord.abs_rect.y, 0.0);
+                    coord.abs_rect.y = std::min((double)coord.abs_rect.y, 1.0);
 
-					coord_t coord;
-					coord.abs_rect = selected_rect;
+                    coord.abs_rect.width = (float)selected_rect.width / scaleWidth / imgWidth;
+                    coord.abs_rect.height = (float)selected_rect.height / scaleHeight / imgHeight;
+                    
+					//coord.abs_rect = selected_rect;
 					coord.id = current_obj_id;
 					current_coord_vec.push_back(coord);
 
@@ -523,7 +686,7 @@ int main(int argc, char *argv[])
 
 			std::string current_synset_name;
 			if (current_obj_id < synset_txt.size()) current_synset_name = "   - " + synset_txt[current_obj_id];
-
+            
 			if (show_mouse_coords) {
 				full_image.copyTo(full_image_roi);
 				int const x_inside = std::min((int)x_end, full_image_roi.cols);
@@ -566,7 +729,40 @@ int main(int argc, char *argv[])
 					}
 				}
 			}
+            
+            // Draw crosshair
+			{
+				const int offset = preview.rows; // Vertical offset
 
+				// Only draw crosshair, if mouse is over image area
+				if (y_end >= offset)
+				{
+					const bool bit_high = true;
+					const bool bit_low = false;
+					const int mouse_offset = 25;
+					const int ver_min = draw_select ? std::min(x_end - mouse_offset, x_start - mouse_offset) : x_end - mouse_offset;
+					const int ver_max = draw_select ? std::max(x_end + mouse_offset, x_start + mouse_offset) : x_end + mouse_offset;
+					const int hor_min = draw_select ? std::min(y_end - mouse_offset, y_start - mouse_offset) : y_end - mouse_offset;
+					const int hor_max = draw_select ? std::max(y_end + mouse_offset, y_start + mouse_offset) : y_end + mouse_offset;
+
+					// Draw crosshair onto empty canvas (draws high bits on low-bit-canvas)
+					cv::Mat crosshair_mask(frame.size(), CV_8UC1, cv::Scalar(bit_low));
+					cv::line(crosshair_mask, cv::Point(0, y_end), cv::Point(ver_min, y_end), cv::Scalar(bit_high)); // Horizontal, left to mouse
+					cv::line(crosshair_mask, cv::Point(ver_max, y_end), cv::Point(crosshair_mask.size().width, y_end), cv::Scalar(bit_high)); // Horizontal, mouse to right
+					cv::line(crosshair_mask, cv::Point(x_end, offset), cv::Point(x_end, std::max(offset, hor_min)), cv::Scalar(bit_high)); // Vertical, top to mouse
+					cv::line(crosshair_mask, cv::Point(x_end, hor_max), cv::Point(x_end, crosshair_mask.size().height), cv::Scalar(bit_high)); // Vertical, mouse to bottom
+
+					// Draw crosshair onto frame copy
+					cv::Mat crosshair_frame(frame.size(), frame.type());
+					frame.copyTo(crosshair_frame);
+					cv::bitwise_not(crosshair_frame, crosshair_frame, crosshair_mask);
+
+					// Fade-in frame copy with crosshair into original frame (for alpha)
+					const double alpha = 0.7;
+					cv::addWeighted(crosshair_frame, alpha, frame, 1 - alpha, 0.0, frame);
+				}
+			}
+			// remove all labels from this image
 			if (clear_marks == true)
 			{
 				clear_marks = false;
@@ -578,7 +774,27 @@ int main(int argc, char *argv[])
 			if (right_button_click == true)
 			{
 				right_button_click = false;
-				if (next_by_click)
+                auto begin = current_coord_vec.begin();
+                auto end = current_coord_vec.end();
+                for (auto it = begin; it != end; ++it)
+				{
+                    Rect_<float> coord = it->abs_rect;
+
+                    int imgWidth = full_rect_dst.width - rightPad - leftPad;
+                    int imgHeight = full_rect_dst.height - topPad - botPad;
+                    coord.x = (leftPad + (float)imgWidth * coord.x) * scaleWidth - scrollWidthPad * scaleWidth;
+                    coord.y = (botPad + (float)imgHeight * coord.y) * scaleHeight - scrollHeightPad * scaleHeight;
+                    
+                    coord.width *= (float)imgWidth * scaleWidth;
+                    coord.height *= (float)imgHeight * scaleHeight;
+                    
+                    if (coord.contains(Point_<float>(x_delete, y_delete))){
+                        std::cout << "deleting box at location x: " << x_delete << " y: " << y_delete << "\n";
+                        it = current_coord_vec.erase(it);
+                        break;
+                    }
+				}
+				/*if (next_by_click)
 				{
 					++trackbar_value;
 				}
@@ -586,7 +802,7 @@ int main(int argc, char *argv[])
 				{
 					full_image.copyTo(full_image_roi);
 					current_coord_vec.clear();
-				}
+				}*/
 			}
 
 
@@ -597,7 +813,7 @@ int main(int argc, char *argv[])
 				setTrackbarPos(trackbar_name_2, window_name, current_obj_id);
 			}
 
-
+            // draw bounding boxes around objects
 			for (auto &i : current_coord_vec)
 			{
 				std::string synset_name;
@@ -609,13 +825,25 @@ int main(int argc, char *argv[])
 				int blue = (offset + 140) % 255 * ((i.id + 0) % 3);
 				Scalar color_rect(red, green, blue);    // Scalar color_rect(100, 200, 100);
 
+                Rect_<float> abs_rect = i.abs_rect; // move and rescale box for scaling
+                
+                //int topPad, botPad, leftPad, rightPad;
+                int imgWidth = full_rect_dst.width - rightPad - leftPad;
+                int imgHeight = full_rect_dst.height - topPad - botPad;
+                abs_rect.x = (leftPad + (float)imgWidth * abs_rect.x) * scaleWidth - scrollWidthPad * scaleWidth;
+                abs_rect.y = (botPad + (float)imgHeight * abs_rect.y) * scaleHeight - scrollHeightPad * scaleHeight;
+                
+                abs_rect.width *= (float)imgWidth * scaleWidth;
+                abs_rect.height *= (float)imgHeight * scaleHeight;
+                
+                rectangle(full_image_roi, abs_rect, color_rect, mark_line_width);
+
 				if (show_mark_class)
 				{
 					putText(full_image_roi, std::to_string(i.id) + synset_name,
-						i.abs_rect.tl() + Point2f(2, 22), FONT_HERSHEY_SIMPLEX, 0.8, color_rect, 2);
+                        abs_rect.tl() + Point2f(2, 22), FONT_HERSHEY_SIMPLEX, 0.8, color_rect, 2);
+						//i.abs_rect.tl() + Point2f(2, 22), FONT_HERSHEY_SIMPLEX, 0.8, color_rect, 2);
 				}
-
-				rectangle(full_image_roi, i.abs_rect, color_rect, mark_line_width);
 			}
 
 
@@ -637,7 +865,7 @@ int main(int argc, char *argv[])
 					"<- prev_img     -> next_img     space - next_img     c - clear_marks     n - one_object_per_img    0-9 - obj_id",
 					Point2i(0, 45), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
 				putText(full_image_roi,
-					"ESC - exit   w - line width   k - hide obj_name   z - undo", //   h - disable help",
+					"ESC - exit   w - line width   k - hide obj_name   z - delete last", //   h - disable help",
 					Point2i(0, 80), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
 			}
 			else
@@ -646,7 +874,6 @@ int main(int argc, char *argv[])
 					"h - show help",
 					Point2i(0, 45), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
 			}
-
 
 			// arrows
 			{
@@ -669,7 +896,7 @@ int main(int argc, char *argv[])
 				line(next_roi, next_triangle_pts[2], next_triangle_pts[3], next_arrow_color, 5);
 				line(next_roi, next_triangle_pts[3], next_triangle_pts[0], next_arrow_color, 5);
 			}
-
+            
 			imshow(window_name, frame);
 
 #ifndef CV_VERSION_EPOCH
@@ -677,12 +904,12 @@ int main(int argc, char *argv[])
 #else
 			int pressed_key = cv::waitKey(20);		// OpenCV 2.x
 #endif
-
 			if (pressed_key >= 0)
 				for (int i = 0; i < 5; ++i) cv::waitKey(1);
 			
 			if (exit_flag) break;	// exit after saving
 			if (pressed_key == 27 || pressed_key == 1048603) exit_flag = true;// break;  // ESC - save & exit
+            if (cv::getWindowProperty(window_name, WND_PROP_AUTOSIZE) == -1) exit_flag = true; // close button pressed
 
 			if (pressed_key >= '0' && pressed_key <= '9') current_obj_id = pressed_key - '0';   // 0 - 9
 			if (pressed_key >= 1048624 && pressed_key <= 1048633) current_obj_id = pressed_key - 1048624;   // 0 - 9
@@ -740,7 +967,7 @@ int main(int argc, char *argv[])
 			}
 
 			//if (pressed_key >= 0) std::cout << "pressed_key = " << (int)pressed_key << std::endl;
-
+            
 		} while (true);
 
 	}
