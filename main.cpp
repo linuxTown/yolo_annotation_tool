@@ -32,8 +32,9 @@
 #pragma comment(lib, "opencv_highgui" OPENCV_VERSION LIB_SUFFIX)
 #endif
 
-
 using namespace cv;
+
+#include "main.h"
 
 std::atomic<bool> right_button_click;
 std::atomic<bool> clear_marks;
@@ -67,6 +68,9 @@ bool zooming = false;
 std::atomic<int> imgHOrig, imgWOrig;
 int topPad, botPad, leftPad, rightPad;
 float scaleWidth, scaleHeight;
+std::string images_path;
+
+std::string previousImagePath = "";
 
 void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
 {
@@ -161,45 +165,6 @@ protected:
 	char do_decimal_point() const { return '.';	}
 };
 
-cv::Mat resizeKeepAspectRatio(const cv::Mat &input, const cv::Size &dstSize, const cv::Scalar &bgcolor)
-{
-    cv::Mat output;
-    
-    double h1 = dstSize.width * (input.rows/(double)input.cols);
-    double w2 = dstSize.height * (input.cols/(double)input.rows);
-
-    if( h1 <= dstSize.height) {
-        cv::resize( input, output, cv::Size(dstSize.width, h1));
-    } else {
-        cv::resize( input, output, cv::Size(w2, dstSize.height));
-    }
-
-    topPad = (dstSize.height - output.rows) / 2;
-    botPad = (dstSize.height - output.rows + 1) / 2;
-    leftPad = (dstSize.width - output.cols) / 2;
-    rightPad = (dstSize.width - output.cols + 1) / 2;
-
-    cv::copyMakeBorder(output, output, topPad, botPad, leftPad, rightPad, cv::BORDER_CONSTANT, bgcolor);
-    
-    // multiply by zoom in scale and crop
-    //int imgH = input.rows + input.rows * mouseScroll;
-    //int imgW = input.cols + input.cols * mouseScroll;
-    int maxX0 = dstSize.width - ((float)output.cols * (1.0 - mouseScroll));
-    int maxY0 = dstSize.height - ((float)output.rows * (1.0 - mouseScroll));
-    scrollWidthPad = scrollWidthPad <= maxX0 ? scrollWidthPad : maxX0;
-    scrollHeightPad = scrollHeightPad <= maxY0 ? scrollHeightPad : maxY0;
-    int x0 = scrollWidthPad;
-    int y0 = scrollHeightPad;
-
-    output = output(Rect(x0, y0, output.cols - (float)output.cols * mouseScroll, output.rows - (float)output.rows * mouseScroll));
-    int oldWidth = output.cols;
-    int oldHeight = output.rows;
-    cv::resize( output, output, cv::Size(dstSize.width, dstSize.height));
-    scaleHeight = (float)output.rows / oldHeight;
-    scaleWidth = (float)output.cols / oldWidth;
-    return output;
-}
-
 int main(int argc, char *argv[])
 {
 
@@ -208,7 +173,7 @@ int main(int argc, char *argv[])
 		std::locale loccomma(std::locale::classic(), new comma);
 		std::locale::global(loccomma);
 
-		std::string images_path = "./";
+		images_path = "./";
 
 		if (argc >= 2) {
 			images_path = std::string(argv[1]);         // path to images, train and synset
@@ -407,10 +372,6 @@ int main(int argc, char *argv[])
 		size_t const preview_number = frame.cols / preview.cols;
         std::vector<Mat> previewImagesCache; 
 
-		struct coord_t {
-			Rect_<float> abs_rect;
-			int id;
-		};
 		std::vector<coord_t> current_coord_vec;
         float scaleFactor = 1.0;
         float resizeFactorImage = 0.0;
@@ -458,6 +419,7 @@ int main(int argc, char *argv[])
 						std::string const txt_filename_path = images_path + "/" + txt_filename;
 
 						std::cout << "txt_filename_path = " << txt_filename_path << std::endl;
+                        previousImagePath = txt_filename_path;
 
 						std::ofstream ofs(txt_filename_path, std::ios::out | std::ios::trunc);
 						ofs << std::fixed;
@@ -557,7 +519,8 @@ int main(int argc, char *argv[])
                         
                         // read bounding boxes from file
                         if(!zooming && !mousePanning){
-                            try {
+                            readCoordsFromFile(jpg_filenames[trackbar_value], current_coord_vec, true);
+                            /*try {
                                 std::string const jpg_filename = jpg_filenames[trackbar_value];
                                 std::string const txt_filename = jpg_filename.substr(0, jpg_filename.find_last_of(".")) + ".txt";
                                 //std::cout << (images_path + "/" + txt_filename) << std::endl;
@@ -581,7 +544,7 @@ int main(int argc, char *argv[])
                                     current_coord_vec.push_back(coord);
                                 }
                             }
-                            catch (...) { std::cout << " Exception when try to read txt-file \n"; }
+                            catch (...) { std::cout << " Exception when try to read txt-file \n"; }*/
                         }
 					}
 
@@ -865,7 +828,7 @@ int main(int argc, char *argv[])
 					"<- prev_img     -> next_img     space - next_img     c - clear_marks     n - one_object_per_img    0-9 - obj_id",
 					Point2i(0, 45), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
 				putText(full_image_roi,
-					"ESC - exit   w - line width   k - hide obj_name   z - delete last", //   h - disable help",
+					"ESC - exit   w - line width   k - hide obj_name   z - delete last   p - copy last detections", //   h - disable help",
 					Point2i(0, 80), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
 			}
 			else
@@ -962,6 +925,13 @@ int main(int argc, char *argv[])
 			case 1048683:
 				show_mark_class = !show_mark_class;
 				break;
+            case 'p':
+			case 1048688:
+                if(trackbar_value > 0){
+                    int prev = trackbar_value - 1;
+                    readCoordsFromFile(jpg_filenames[prev], current_coord_vec, false);
+                }
+				break;
 			default:
 				;
 			}
@@ -979,4 +949,73 @@ int main(int argc, char *argv[])
 	}
 
     return 0;
+}
+
+void readCoordsFromFile(std::string const jpg_filename, std::vector<coord_t> &current_coord_vec, bool clear){
+    try {
+        //std::string const jpg_filename = jpg_filenames[trackbar_value];
+        std::string const txt_filename = jpg_filename.substr(0, jpg_filename.find_last_of(".")) + ".txt";
+        //std::cout << (images_path + "/" + txt_filename) << std::endl;
+        std::ifstream ifs(images_path + "/" + txt_filename);
+        if(clear){
+            current_coord_vec.clear();
+        }
+        for (std::string line; getline(ifs, line);)
+        {
+            std::stringstream ss(line);
+            coord_t coord;
+            coord.id = -1;
+            ss >> coord.id;
+            if (coord.id < 0) continue;
+            float relative_coord[4] = { -1, -1, -1, -1 };  // rel_center_x, rel_center_y, rel_width, rel_height                          
+            for (size_t i = 0; i < 4; i++) if(!(ss >> relative_coord[i])) continue;
+            for (size_t i = 0; i < 4; i++) if (relative_coord[i] < 0) continue;
+            coord.abs_rect.x = (relative_coord[0] - relative_coord[2] / 2);
+            coord.abs_rect.y = (relative_coord[1] - relative_coord[3] / 2);
+            coord.abs_rect.width = relative_coord[2];
+            coord.abs_rect.height = relative_coord[3];
+
+            current_coord_vec.push_back(coord);
+        }
+    }
+    catch (...) { std::cout << " Exception when try to read txt-file \n"; }
+}
+
+cv::Mat resizeKeepAspectRatio(const cv::Mat &input, const cv::Size &dstSize, const cv::Scalar &bgcolor)
+{
+    cv::Mat output;
+    
+    double h1 = dstSize.width * (input.rows/(double)input.cols);
+    double w2 = dstSize.height * (input.cols/(double)input.rows);
+
+    if( h1 <= dstSize.height) {
+        cv::resize( input, output, cv::Size(dstSize.width, h1));
+    } else {
+        cv::resize( input, output, cv::Size(w2, dstSize.height));
+    }
+
+    topPad = (dstSize.height - output.rows) / 2;
+    botPad = (dstSize.height - output.rows + 1) / 2;
+    leftPad = (dstSize.width - output.cols) / 2;
+    rightPad = (dstSize.width - output.cols + 1) / 2;
+
+    cv::copyMakeBorder(output, output, topPad, botPad, leftPad, rightPad, cv::BORDER_CONSTANT, bgcolor);
+    
+    // multiply by zoom in scale and crop
+    //int imgH = input.rows + input.rows * mouseScroll;
+    //int imgW = input.cols + input.cols * mouseScroll;
+    int maxX0 = dstSize.width - ((float)output.cols * (1.0 - mouseScroll));
+    int maxY0 = dstSize.height - ((float)output.rows * (1.0 - mouseScroll));
+    scrollWidthPad = scrollWidthPad <= maxX0 ? scrollWidthPad : maxX0;
+    scrollHeightPad = scrollHeightPad <= maxY0 ? scrollHeightPad : maxY0;
+    int x0 = scrollWidthPad;
+    int y0 = scrollHeightPad;
+
+    output = output(Rect(x0, y0, output.cols - (float)output.cols * mouseScroll, output.rows - (float)output.rows * mouseScroll));
+    int oldWidth = output.cols;
+    int oldHeight = output.rows;
+    cv::resize( output, output, cv::Size(dstSize.width, dstSize.height));
+    scaleHeight = (float)output.rows / oldHeight;
+    scaleWidth = (float)output.cols / oldWidth;
+    return output;
 }
