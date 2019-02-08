@@ -178,18 +178,18 @@ void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
     // if mouse scroll:
     if (event==EVENT_MOUSEWHEEL)
     {
-        if (getMouseWheelDelta(flags) > 0 && mouseScroll < 0.9){
-            mouseScroll += (float)0.1;
-            zooming = true;
-            //std::min(mouseScroll, 0.9f);
-        }
-        else if(getMouseWheelDelta(flags) < 0 && mouseScroll > 0.1){
+        if (getMouseWheelDelta(flags) > 0 && mouseScroll > 0.1){
             mouseScroll -= (float)0.1;
             zooming = true;
-            //std::max(mouseScroll, 0.0f);
+            //std::min(mouseScroll, 0.9f);
+            std::cout << "Zooming out " << mouseScroll << "\n";
         }
-        
-        std::cout << "cv::EVENT_MOUSEWHEEL scroll: " << mouseScroll << "\n";
+        else if(getMouseWheelDelta(flags) < 0 && mouseScroll < 0.9){
+            mouseScroll += (float)0.1;
+            zooming = true;
+            //std::max(mouseScroll, 0.0f);
+            std::cout << "Zooming in " << mouseScroll << "\n";
+        }
     }
 }
 
