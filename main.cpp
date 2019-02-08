@@ -36,6 +36,15 @@ using namespace cv;
 
 #include "main.h"
 
+//-------------*-------------
+//    MAX WINDOW SIZE IN PX
+const int ScreenWidth = 1680;
+const int ScreenHeight = 1050;
+
+const int PreviewHeight = 100;
+const int PreviewWidth = 100;
+//-------------*-------------
+
 std::atomic<bool> right_button_click;
 std::atomic<bool> clear_marks;
 
@@ -51,7 +60,11 @@ std::atomic<int> x_start, y_start;
 std::atomic<int> x_end, y_end;
 std::atomic<int> x_size, y_size;
 std::atomic<bool> draw_select, selected, undo;
+std::atomic<bool> drag_bbox;
 std::atomic<int> x_mouseMove_start, y_mouseMove_start;
+std::atomic<int> selectedBoxId;
+
+std::vector<coord_t> current_coord_vec;
 bool mousePanning = false;
 
 std::atomic<int> add_id_img;
@@ -61,6 +74,7 @@ Rect next_img_rect(1280 - 50, 0, 50, 100);
 Size current_img_size;
 Size original_img_size;
 
+Rect full_rect_dst;
 float mouseScroll = 0;
 int scrollHeightPad = 0;
 int scrollWidthPad = 0;
@@ -74,31 +88,50 @@ std::string previousImagePath = "";
 
 void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
 {
+    bool holdingCtrl = flags & cv::EVENT_FLAG_CTRLKEY; // ctrl is pressed
+    
     if (event == cv::EVENT_LBUTTONDBLCLK)
     {
         std::cout << "cv::EVENT_LBUTTONDBLCLK \n";
     }
     else if (event == cv::EVENT_LBUTTONDOWN)
     {
-        draw_select = true;
-        selected = false;
         x_start = x;
         y_start = y;
-
-        if (prev_img_rect.contains(Point2i(x, y))) add_id_img = -1;
-        else if (next_img_rect.contains(Point2i(x, y))) add_id_img = 1;
-        else add_id_img = 0;
+        
+        if(holdingCtrl){
+            drag_bbox = true;
+            x_mouseMove_start = x;
+            y_mouseMove_start = y;
+        }else{
+            draw_select = true;
+            selected = false;
+            if (prev_img_rect.contains(Point2i(x, y))) add_id_img = -1;
+            else if (next_img_rect.contains(Point2i(x, y))) add_id_img = 1;
+            else add_id_img = 0;
+        }
+                
+        // get selected
+        selectedBoxId = getClickedBoxId(current_coord_vec, x, y);
         //std::cout << "cv::EVENT_LBUTTONDOWN \n";
     }
     else if (event == cv::EVENT_LBUTTONUP)
     {
+        selectedBoxId = -1;
+        
         x_size = abs(x - x_start);
         y_size = abs(y - y_start);
         x_end = max(x, 0);
         y_end = max(y, 0);
-        draw_select = false;
-        selected = true;
+       
         //std::cout << "cv::EVENT_LBUTTONUP \n";
+        
+        if(drag_bbox){
+            drag_bbox = false;
+        }else{
+            draw_select = false;
+            selected = true;
+        }
     }
     else if (event == cv::EVENT_RBUTTONDOWN)
     {
@@ -112,6 +145,8 @@ void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
     }
     if (event == cv::EVENT_RBUTTONDBLCLK) // right mouse button double click
     {
+        // get selected
+        selectedBoxId = getClickedBoxId(current_coord_vec, x, y);
         right_button_click = true;
         std::cout << "cv::EVENT_RBUTTONDOWN \n";
         x_delete = x;
@@ -228,6 +263,7 @@ int main(int argc, char *argv[])
 			exit(0);
 		}
 
+        selectedBoxId = -1;
 		bool show_mouse_coords = false;
 		std::vector<std::string> filenames_in_folder;
 		//glob(images_path, filenames_in_folder); // void glob(String pattern, std::vector<String>& result, bool recursive = false);
@@ -361,18 +397,16 @@ int main(int argc, char *argv[])
 		}
 		std::cout << "File loaded: " << synset_filename << std::endl;
 
-		Mat preview(Size(100, 100), CV_8UC3);
+		Mat preview(Size(PreviewWidth, PreviewHeight), CV_8UC3);
 		//Mat full_image(Size(1680, 1050), CV_8UC3);
-		Mat full_image(Size(1680, 1050), CV_8UC3);
+		Mat full_image(Size(ScreenWidth, ScreenHeight), CV_8UC3);
 		Mat frame(Size(full_image.cols, full_image.rows + preview.rows), CV_8UC3); // 8bit U Channels 3
 
-		Rect full_rect_dst(Point2i(0, preview.rows), Size(frame.cols, frame.rows - preview.rows));
+		full_rect_dst = Rect(Point2i(0, preview.rows), Size(frame.cols, frame.rows - preview.rows));
 		Mat full_image_roi = frame(full_rect_dst);
 
 		size_t const preview_number = frame.cols / preview.cols;
-        std::vector<Mat> previewImagesCache; 
-
-		std::vector<coord_t> current_coord_vec;
+        std::vector<Mat> previewImagesCache;
         float scaleFactor = 1.0;
         float resizeFactorImage = 0.0;
         
@@ -402,14 +436,14 @@ int main(int argc, char *argv[])
 
 		do {
 			//trackbar_value = min(max(0, trackbar_value), (int)jpg_filenames_path.size() - 1);
-			if (old_trackbar_value != trackbar_value || exit_flag || zooming || mousePanning)
+			if (old_trackbar_value != trackbar_value || exit_flag || zooming || mousePanning || drag_bbox)
 			{
 				trackbar_value = min(max(0, trackbar_value), (int)jpg_filenames_path.size() - 1);
 				setTrackbarPos(trackbar_name, window_name, trackbar_value);
 				frame(Rect(0, 0, frame.cols, preview.rows)) = Scalar::all(0);
 
 				// save current coords
-				if (old_trackbar_value >= 0 && !zooming && !mousePanning) // && current_coord_vec.size() > 0) // Yolo v2 can processes background-image without objects
+				if (old_trackbar_value >= 0 && !zooming && !mousePanning && !drag_bbox) // && current_coord_vec.size() > 0) // Yolo v2 can processes background-image without objects
 				{
 					try
 					{
@@ -461,7 +495,7 @@ int main(int argc, char *argv[])
 				// show preview images
 				for (size_t i = 0; i < preview_number && (i + trackbar_value) < jpg_filenames_path.size(); ++i)
 				{
-                    if(originalImaleLoadedId != trackbar_value && !zooming && !mousePanning){
+                    if(originalImaleLoadedId != trackbar_value && !zooming && !mousePanning && !drag_bbox){
                         originalImaleLoadedId = trackbar_value;
                         originalImage = imread(jpg_filenames_path[trackbar_value + i]);
                         // check if the image has been loaded successful to prevent crash 
@@ -518,7 +552,7 @@ int main(int argc, char *argv[])
                         float const relative_center_y = ((float)(y_inside) / full_image_roi.rows);
                         
                         // read bounding boxes from file
-                        if(!zooming && !mousePanning){
+                        if(!zooming && !mousePanning && !drag_bbox){
                             readCoordsFromFile(jpg_filenames[trackbar_value], current_coord_vec, true);
                             /*try {
                                 std::string const jpg_filename = jpg_filenames[trackbar_value];
@@ -559,7 +593,7 @@ int main(int argc, char *argv[])
 						line(dst_roi, Point2i(85, 93), Point2i(93, 85), Scalar(50, 200, 100), 2);
 					}
 				}
-                if(!zooming && !mousePanning)
+                if(!zooming && !mousePanning && !drag_bbox)
                     std::cout << " trackbar_value = " << trackbar_value << std::endl;
 
 				old_trackbar_value = trackbar_value;
@@ -737,26 +771,15 @@ int main(int argc, char *argv[])
 			if (right_button_click == true)
 			{
 				right_button_click = false;
-                auto begin = current_coord_vec.begin();
-                auto end = current_coord_vec.end();
-                for (auto it = begin; it != end; ++it)
-				{
-                    Rect_<float> coord = it->abs_rect;
-
-                    int imgWidth = full_rect_dst.width - rightPad - leftPad;
-                    int imgHeight = full_rect_dst.height - topPad - botPad;
-                    coord.x = (leftPad + (float)imgWidth * coord.x) * scaleWidth - scrollWidthPad * scaleWidth;
-                    coord.y = (botPad + (float)imgHeight * coord.y) * scaleHeight - scrollHeightPad * scaleHeight;
-                    
-                    coord.width *= (float)imgWidth * scaleWidth;
-                    coord.height *= (float)imgHeight * scaleHeight;
-                    
-                    if (coord.contains(Point_<float>(x_delete, y_delete))){
-                        std::cout << "deleting box at location x: " << x_delete << " y: " << y_delete << "\n";
-                        it = current_coord_vec.erase(it);
-                        break;
-                    }
-				}
+                //int id = getClickedBoxId(current_coord_vec, full_rect_dst);
+                if(selectedBoxId > -1)
+                {
+                    std::cout << "deleting box at location x: " << x_delete << " y: " << y_delete << "\n";
+                    current_coord_vec.erase(current_coord_vec.begin() + selectedBoxId);
+                }else{
+                    std::cout << "no bbox found at cursor location\n";
+                }
+                
 				/*if (next_by_click)
 				{
 					++trackbar_value;
@@ -766,7 +789,80 @@ int main(int argc, char *argv[])
 					full_image.copyTo(full_image_roi);
 					current_coord_vec.clear();
 				}*/
-			}
+			}else if(drag_bbox){
+                int xEnd = x_end;
+                int yEnd = y_end;
+                
+                if(selectedBoxId > -1 && selectedBoxId < current_coord_vec.size()){
+                    Rect_<float>* bbox = &current_coord_vec[selectedBoxId].abs_rect;
+                    
+                    int imgWidth = full_rect_dst.width - rightPad - leftPad;
+                    int imgHeight = full_rect_dst.height - topPad - botPad;
+                    float xDelta = (float)(xEnd - x_mouseMove_start) / (imgWidth * scaleWidth);
+                    float yDelta = (float)(yEnd - y_mouseMove_start) / (imgHeight * scaleHeight);
+                    //xDelta = xDelta - xDelta * scaleWidth;
+                    //yDelta = yDelta - yDelta * scaleHeight;
+            
+                    //float percentageX = (float)xDelta * imgWidth;
+                    //float percentageY = (float)yDelta * imgHeight;
+                    //std::cout << xDelta << " " << yDelta << "\n";
+                    
+                    // check if reached edge of image
+                    float xMax = 1.0f - (float)bbox->width;
+                    if(xDelta < 0){
+                        bbox->x = std::max((float)bbox->x + xDelta, 0.0f);
+                    }else{
+                        bbox->x = std::min((float)bbox->x + xDelta, xMax);
+                    }
+                    
+                    float yMax = 1.0f - (float)bbox->height;
+                    if(yDelta < 0){
+                        bbox->y = std::max((float)bbox->y + yDelta, 0.0f);
+                    }else{
+                        bbox->y = std::min((float)bbox->y + yDelta, yMax);
+                    }
+                }
+                
+                // reset:
+                x_mouseMove_start = xEnd;
+                y_mouseMove_start = yEnd;
+                //-------------------------------------------------------------
+                /*for (auto &i : current_coord_vec)
+						{
+							float const relative_center_x = (float)(i.abs_rect.x + i.abs_rect.width / 2);// / full_image_roi.cols;
+							float const relative_center_y = (float)(i.abs_rect.y + i.abs_rect.height / 2);// / full_image_roi.rows;
+							float const relative_width = (float)i.abs_rect.width;// / full_image_roi.cols;
+							float const relative_height = (float)i.abs_rect.height;// / full_image_roi.rows;
+
+							if (relative_width <= 0) continue;
+							if (relative_height <= 0) continue;
+							if (relative_center_x <= 0) continue;
+							if (relative_center_y <= 0) continue;
+
+							ofs << i.id << " " <<
+								relative_center_x << " " << relative_center_y << " " <<
+								relative_width << " " << relative_height << std::endl;
+						}
+                // tmp---------------------------------------------------------
+                int red = (offset + 0) % 255 * ((i.id + 2) % 3);
+				int green = (offset + 70) % 255 * ((i.id + 1) % 3);
+				int blue = (offset + 140) % 255 * ((i.id + 0) % 3);
+				Scalar color_rect(red, green, blue);    // Scalar color_rect(100, 200, 100);
+
+                Rect_<float> abs_rect = i.abs_rect; // move and rescale box for scaling
+                
+                //int topPad, botPad, leftPad, rightPad;
+                int imgWidth = full_rect_dst.width - rightPad - leftPad;
+                int imgHeight = full_rect_dst.height - topPad - botPad;
+                abs_rect.x = (leftPad + (float)imgWidth * abs_rect.x) * scaleWidth - scrollWidthPad * scaleWidth;
+                abs_rect.y = (botPad + (float)imgHeight * abs_rect.y) * scaleHeight - scrollHeightPad * scaleHeight;
+                
+                abs_rect.width *= (float)imgWidth * scaleWidth;
+                abs_rect.height *= (float)imgHeight * scaleHeight;
+                
+                rectangle(full_image_roi, abs_rect, color_rect, mark_line_width);*/
+                //------------------------------------------------------------------------------
+            }
 
 
 			if (old_current_obj_id != current_obj_id)
@@ -1018,4 +1114,35 @@ cv::Mat resizeKeepAspectRatio(const cv::Mat &input, const cv::Size &dstSize, con
     scaleHeight = (float)output.rows / oldHeight;
     scaleWidth = (float)output.cols / oldWidth;
     return output;
+}
+
+int getClickedBoxId(const std::vector<coord_t>& current_coord_vec, const int x, int y){
+    int id = -1;
+    //add preview bar height to y
+    y -= PreviewHeight;
+    
+    //std::vector<coord_t>::iterator begin = current_coord_vec.begin();
+    //std::vector<coord_t>::iterator end = current_coord_vec.end();
+    //std::vector<coord_t>::iterator it = begin;
+    int imgWidth = full_rect_dst.width - rightPad - leftPad;
+    int imgHeight = full_rect_dst.height - topPad - botPad;
+    
+    for (int i = 0; i < current_coord_vec.size(); ++i)
+    {
+        Rect_<float> coord = current_coord_vec.at(i).abs_rect;
+
+        coord.x = (leftPad + (float)imgWidth * coord.x) * scaleWidth - scrollWidthPad * scaleWidth;
+        coord.y = (botPad + (float)imgHeight * coord.y) * scaleHeight - scrollHeightPad * scaleHeight;
+        
+        coord.width *= (float)imgWidth * scaleWidth;
+        coord.height *= (float)imgHeight * scaleHeight;
+        
+        if (coord.contains(Point_<float>(x, y))){
+            //std::cout << "deleting box at location x: " << x_delete << " y: " << y_delete << "\n";
+            //it = current_coord_vec.erase(it);
+            id = i;
+            break;
+        }
+    }
+    return id;
 }
