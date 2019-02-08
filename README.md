@@ -3,6 +3,8 @@
 
 **This repository differs from the original**, with added functionality, such as the ability to zoom in, pan photo by holding right mouse button while keeping bounding boxes location. I also added ability to delete bounding box by hovering over it and double right clicking the mouse button. Also images maintain their aspect ratio, doesn't stretch by adding padding to photo edges. With p key, you can copy all detection's from previous image, that helps alot if you have static objects in video.
 
+***To move bounding boxes, hold down Ctrl key while you left click on bounding box location***, then while holding both buttons, you can move it by sliding mouse.
+
 * To compile on **Windows** open `yolo_mark.sln` in MSVS2013/2015, compile it **x64 & Release** and run the file: `x64/Release/yolo_mark.cmd`. Change paths in `yolo_mark.sln` to the OpenCV 2.x/3.x installed on your computer:
 
     * (right click on project) -> properties -> C/C++ -> General -> Additional Include Directories: `C:\opencv_3.0\opencv\build\include;`
