@@ -554,31 +554,6 @@ int main(int argc, char *argv[])
                         // read bounding boxes from file
                         if(!zooming && !mousePanning && !drag_bbox){
                             readCoordsFromFile(jpg_filenames[trackbar_value], current_coord_vec, true);
-                            /*try {
-                                std::string const jpg_filename = jpg_filenames[trackbar_value];
-                                std::string const txt_filename = jpg_filename.substr(0, jpg_filename.find_last_of(".")) + ".txt";
-                                //std::cout << (images_path + "/" + txt_filename) << std::endl;
-                                std::ifstream ifs(images_path + "/" + txt_filename);
-                                current_coord_vec.clear();
-                                for (std::string line; getline(ifs, line);)
-                                {
-                                    std::stringstream ss(line);
-                                    coord_t coord;
-                                    coord.id = -1;
-                                    ss >> coord.id;
-                                    if (coord.id < 0) continue;
-                                    float relative_coord[4] = { -1, -1, -1, -1 };  // rel_center_x, rel_center_y, rel_width, rel_height                          
-                                    for (size_t i = 0; i < 4; i++) if(!(ss >> relative_coord[i])) continue;
-                                    for (size_t i = 0; i < 4; i++) if (relative_coord[i] < 0) continue;
-                                    coord.abs_rect.x = (relative_coord[0] - relative_coord[2] / 2);
-                                    coord.abs_rect.y = (relative_coord[1] - relative_coord[3] / 2);
-                                    coord.abs_rect.width = relative_coord[2];
-                                    coord.abs_rect.height = relative_coord[3];
-
-                                    current_coord_vec.push_back(coord);
-                                }
-                            }
-                            catch (...) { std::cout << " Exception when try to read txt-file \n"; }*/
                         }
 					}
 
@@ -800,11 +775,6 @@ int main(int argc, char *argv[])
                     int imgHeight = full_rect_dst.height - topPad - botPad;
                     float xDelta = (float)(xEnd - x_mouseMove_start) / (imgWidth * scaleWidth);
                     float yDelta = (float)(yEnd - y_mouseMove_start) / (imgHeight * scaleHeight);
-                    //xDelta = xDelta - xDelta * scaleWidth;
-                    //yDelta = yDelta - yDelta * scaleHeight;
-            
-                    //float percentageX = (float)xDelta * imgWidth;
-                    //float percentageY = (float)yDelta * imgHeight;
                     //std::cout << xDelta << " " << yDelta << "\n";
                     
                     // check if reached edge of image
@@ -826,42 +796,6 @@ int main(int argc, char *argv[])
                 // reset:
                 x_mouseMove_start = xEnd;
                 y_mouseMove_start = yEnd;
-                //-------------------------------------------------------------
-                /*for (auto &i : current_coord_vec)
-						{
-							float const relative_center_x = (float)(i.abs_rect.x + i.abs_rect.width / 2);// / full_image_roi.cols;
-							float const relative_center_y = (float)(i.abs_rect.y + i.abs_rect.height / 2);// / full_image_roi.rows;
-							float const relative_width = (float)i.abs_rect.width;// / full_image_roi.cols;
-							float const relative_height = (float)i.abs_rect.height;// / full_image_roi.rows;
-
-							if (relative_width <= 0) continue;
-							if (relative_height <= 0) continue;
-							if (relative_center_x <= 0) continue;
-							if (relative_center_y <= 0) continue;
-
-							ofs << i.id << " " <<
-								relative_center_x << " " << relative_center_y << " " <<
-								relative_width << " " << relative_height << std::endl;
-						}
-                // tmp---------------------------------------------------------
-                int red = (offset + 0) % 255 * ((i.id + 2) % 3);
-				int green = (offset + 70) % 255 * ((i.id + 1) % 3);
-				int blue = (offset + 140) % 255 * ((i.id + 0) % 3);
-				Scalar color_rect(red, green, blue);    // Scalar color_rect(100, 200, 100);
-
-                Rect_<float> abs_rect = i.abs_rect; // move and rescale box for scaling
-                
-                //int topPad, botPad, leftPad, rightPad;
-                int imgWidth = full_rect_dst.width - rightPad - leftPad;
-                int imgHeight = full_rect_dst.height - topPad - botPad;
-                abs_rect.x = (leftPad + (float)imgWidth * abs_rect.x) * scaleWidth - scrollWidthPad * scaleWidth;
-                abs_rect.y = (botPad + (float)imgHeight * abs_rect.y) * scaleHeight - scrollHeightPad * scaleHeight;
-                
-                abs_rect.width *= (float)imgWidth * scaleWidth;
-                abs_rect.height *= (float)imgHeight * scaleHeight;
-                
-                rectangle(full_image_roi, abs_rect, color_rect, mark_line_width);*/
-                //------------------------------------------------------------------------------
             }
 
 
@@ -1127,7 +1061,7 @@ int getClickedBoxId(const std::vector<coord_t>& current_coord_vec, const int x, 
     int imgWidth = full_rect_dst.width - rightPad - leftPad;
     int imgHeight = full_rect_dst.height - topPad - botPad;
     
-    for (int i = 0; i < current_coord_vec.size(); ++i)
+    for (int i = current_coord_vec.size() - 1; i >= 0; --i) // check in reversed order
     {
         Rect_<float> coord = current_coord_vec.at(i).abs_rect;
 
