@@ -198,6 +198,30 @@ void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
             std::cout << "event = "<< event << ", mouse delta: " << getMouseWheelDelta(flags) << " mouse scroll: " << mouseScroll << "\n";
         }
     }
+    
+    // for older opencv versions and Ubuntu vertical scroll somehow uses horizontal scroll events
+    if(event == EVENT_MOUSEHWHEEL)
+    {
+        if (getMouseWheelDelta(flags) > 0 && mouseScroll > 0.1){
+            mouseScroll -= (float)0.1;
+            zooming = true;
+            //std::min(mouseScroll, 0.9f);
+            std::cout << "Zooming out " << mouseScroll << "\n";
+        }
+        else if(getMouseWheelDelta(flags) < 0 && mouseScroll < 0.9){
+            mouseScroll += (float)0.1;
+            zooming = true;
+            //std::max(mouseScroll, 0.0f);
+            std::cout << "Zooming in " << mouseScroll << "\n";
+        }else{
+            if(mouseScroll >= 0 && mouseScroll < 0.1){
+                std::cout << "fully zoomed out!!, to zoom in please change scroll direction, ";
+            }else{
+                std::cout << "fully zoomed in!!, to zoom out please change scroll direction, ";
+            }
+            std::cout << "event = "<< event << ", mouse delta: " << getMouseWheelDelta(flags) << " mouse scroll: " << mouseScroll << "\n";
+        }
+    }
 }
 
 class comma : public std::numpunct<char> {
