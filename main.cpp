@@ -189,6 +189,13 @@ void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
             zooming = true;
             //std::max(mouseScroll, 0.0f);
             std::cout << "Zooming in " << mouseScroll << "\n";
+        }else{
+            if(mouseScroll >= 0 && mouseScroll < 0.1){
+                std::cout << "fully zoomed out!!, to zoom in please change scroll direction, ";
+            }else{
+                std::cout << "fully zoomed in!!, to zoom out please change scroll direction, ";
+            }
+            std::cout << "event = "<< event << ", mouse delta: " << getMouseWheelDelta(flags) << " mouse scroll: " << mouseScroll << "\n";
         }
     }
 }
