@@ -887,16 +887,20 @@ int main(int argc, char *argv[])
 			{
 				putText(full_image_roi,
 					"<- prev_img     -> next_img     space - next_img     c - clear_marks     n - one_object_per_img    0-9 - obj_id",
-					Point2i(0, 45), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
+					Point2i(0, 45), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(94, 206, 165, 255), 2);
 				putText(full_image_roi,
 					"ESC - exit   w - line width   k - hide obj_name   z - delete last   p - copy last detections", //   h - disable help",
-					Point2i(0, 80), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
+					Point2i(0, 80), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(94, 206, 165, 255), 2);
+                std::string const jpg_filename = jpg_filenames[trackbar_value]; // current image file name
+                putText(full_image_roi,
+					"current image name: " + jpg_filename, //   h - hide image name",
+					Point2i(0, 115), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(94, 206, 165, 255), 2);
 			}
 			else
 			{
 				putText(full_image_roi,
 					"h - show help",
-					Point2i(0, 45), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
+					Point2i(0, 45), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(94, 206, 165, 255), 2);
 			}
 
 			// arrows
